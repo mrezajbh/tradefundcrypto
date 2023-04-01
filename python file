@@ -1,0 +1,144 @@
+import requests
+import pandas as pd
+
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+def get_inflation_rate(api_key, series_id='CPALTT01USM657N'):
+    df = get_fundamental_data(api_key, series_id)
+    inflation_rate = float(df.iloc[-1]['value'])
+    return inflation_rate
+
+def get_news_sentiment(api_key, query='bitcoin'):
+    url = f'https://newsapi.org/v2/everything?q={query}&apiKey={api_key}'
+    response = requests.get(url)
+    news_data = response.json()
+
+    analyzer = SentimentIntensityAnalyzer()
+    total_sentiment = 0
+    num_articles = len(news_data['articles'])
+
+    for article in news_data['articles']:
+        sentiment = analyzer.polarity_scores(article['title'])
+        total_sentiment += sentiment['compound']
+
+    avg_sentiment = total_sentiment / num_articles
+    return avg_sentiment
+
+def normalize_news_sentiment(sentiment_score, min_value=-1, max_value=1):
+    return (sentiment_score - min_value) / (max_value - min_value)
+
+def get_crypto_price(coin_id='bitcoin'):
+    url = f'https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd'
+    response = requests.get(url)
+    price_data = response.json()
+    return price_data[coin_id]['usd']
+
+def get_fundamental_data(api_key, series_id='GDPC1'):
+    url = f'https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={api_key}&file_type=json'
+    response = requests.get(url)
+    data = response.json()
+    df = pd.DataFrame(data['observations'])
+    return df
+
+def get_cpi_growth_rate(cpi_df):
+    cpi_df['value'] = cpi_df['value'].astype(float)
+    cpi_df['growth_rate'] = (cpi_df['value'].pct_change()) * 100
+    return cpi_df.iloc[-1]['growth_rate']
+
+def get_central_bank_balance_sheet(api_key, series_id='WALCL'):
+    df = get_fundamental_data(api_key, series_id)
+    balance_sheet = float(df.iloc[-1]['value'])
+    return balance_sheet
+
+def normalize(value, min_value, max_value):
+    return (value - min_value) / (max_value - min_value)
+
+def make_decision(gdp_growth_rate, tnx_rate, unemployment_rate, cpi_growth_rate, saving_rate, cci, predicted_interest_rate, news_sentiment, inflation_rate, central_bank_balance_sheet, weights):
+    norm_gdp_growth_rate = normalize(gdp_growth_rate, -5, 5)
+    norm_tnx_rate = normalize(tnx_rate, 0, 5)
+    norm_unemployment_rate = normalize(unemployment_rate, 0, 10)
+    norm_cpi_growth_rate = normalize(cpi_growth_rate, -2, 5)
+    norm_saving_rate = normalize(saving_rate, 0, 40)
+    norm_cci = normalize(cci, 0, 200)
+    norm_predicted_interest_rate = 1 - normalize(predicted_interest_rate, 0, 5)
+    norm_news_sentiment = normalize_news_sentiment(news_sentiment)
+    norm_inflation_rate = normalize(inflation_rate, -2, 5)
+    norm_central_bank_balance_sheet =normalize(central_bank_balance_sheet, 1000000, 10000000)
+
+# Calculate the weighted score
+    score = (weights['gdp_growth'] * norm_gdp_growth_rate +
+         weights['tnx_rate'] * norm_tnx_rate +
+         weights['unemployment_rate'] * norm_unemployment_rate +
+         weights['cpi_growth_rate'] * norm_cpi_growth_rate +
+         weights['saving_rate'] * norm_saving_rate +
+         weights['cci'] * norm_cci +
+         weights['predicted_interest_rate'] * norm_predicted_interest_rate +
+         weights['news_sentiment'] * norm_news_sentiment +
+         weights['inflation_rate'] * norm_inflation_rate +
+         weights['central_bank_balance_sheet'] * norm_central_bank_balance_sheet)
+
+    if score > 0.5:
+        return 'Open Long Position'
+    else:
+        return 'Open Short Position'
+
+if __name__ == '__main__':
+    fred_api_key = ''
+    news_api_key = ''
+    coin_id = 'bitcoin'
+    gdp_growth_series_id = 'A191RL1Q225SBEA'  # Real GDP Growth Rate
+    tnx_series_id = 'GS10'  # 10-Year Treasury Constant Maturity Rate
+    unemployment_series_id = 'UNRATE'  # Unemployment Rate
+    cpi_series_id = 'CPIAUCSL'  # Consumer Price Index for All Urban Consumers
+    central_bank_balance_sheet_series_id = 'WALCL' # Central Bank Balance Sheet
+    crypto_price = get_crypto_price(coin_id)
+    gdp_growth_df = get_fundamental_data(fred_api_key, gdp_growth_series_id)
+    latest_gdp_growth_rate = float(gdp_growth_df.iloc[-1]['value'])
+
+    tnx_df = get_fundamental_data(fred_api_key, tnx_series_id)
+    latest_tnx_rate = float(tnx_df.iloc[-1]['value'])
+
+    unemployment_df = get_fundamental_data(fred_api_key, unemployment_series_id)
+    latest_unemployment_rate = float(unemployment_df.iloc[-1]['value'])
+
+    cpi_df = get_fundamental_data(fred_api_key, cpi_series_id)
+    latest_cpi_growth_rate = get_cpi_growth_rate(cpi_df)
+
+    saving_rate_series_id = 'PSAVERT'  # Personal Saving Rate
+    cci_series_id = 'UMCSENT'  # Consumer Confidence Index
+
+    saving_rate_df = get_fundamental_data(fred_api_key, saving_rate_series_id)
+    latest_saving_rate = float(saving_rate_df.iloc[-1]['value'])
+
+    cci_df = get_fundamental_data(fred_api_key, cci_series_id)
+    latest_cci = float(cci_df.iloc[-1]['value'])
+
+    news_sentiment = get_news_sentiment(news_api_key)
+
+    inflation_rate_series_id = 'CPALTT01USM657N'  # US Inflation Rate
+    latest_inflation_rate = get_inflation_rate(fred_api_key, inflation_rate_series_id)
+
+    latest_central_bank_balance_sheet = get_central_bank_balance_sheet(fred_api_key, central_bank_balance_sheet_series_id)
+
+    # Placeholder predicted interest rate value (obtain from a reliable source or forecasting model)
+    predicted_interest_rate = 5
+
+    news_sentiment = get_news_sentiment(news_api_key)
+
+weights = {
+    'gdp_growth': 0.125,
+    'tnx_rate': 0.125,
+    'unemployment_rate': 0.125,
+    'cpi_growth_rate': 0.125,
+    'saving_rate': 0.0625,
+    'cci': 0.0625,
+    'predicted_interest_rate': 0.125,
+    'news_sentiment': 0.0625,
+    'inflation_rate': 0.125,
+    'central_bank_balance_sheet': 0.0625,
+}
+
+decision = make_decision(latest_gdp_growth_rate, latest_tnx_rate, latest_unemployment_rate, latest_cpi_growth_rate, latest_saving_rate, latest_cci, predicted_interest_rate, news_sentiment, latest_inflation_rate, latest_central_bank_balance_sheet, weights)
+
+print(f'Crypto Price: {crypto_price}')
+print(f'Decision: {decision}')
